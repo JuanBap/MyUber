@@ -78,42 +78,20 @@ function moverTaxi() {
     }
 }
 
-// Función para regresar a la posición inicial paso a paso
-async function regresarAPosicionInicial(intervaloMovimiento) {
-    while (x !== taxi.posicionInicial.x || y !== taxi.posicionInicial.y) {
-        // Determinar dirección para X
-        if (x < taxi.posicionInicial.x && x < n - 1) {
-            x += 1;
-        } else if (x > taxi.posicionInicial.x && x > 0) {
-            x -= 1;
-        }
-
-        // Determinar dirección para Y
-        if (y < taxi.posicionInicial.y && y < m - 1) {
-            y += 1;
-        } else if (y > taxi.posicionInicial.y && y > 0) {
-            y -= 1;
-        }
-
-        // Enviar nueva posición al servidor
-        const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
-        socketPub.send(JSON.stringify(nuevaPosicion));
-        console.log(`Taxi ${id} regresó a (${x}, ${y})`);
-
-        // Esperar el intervalo de movimiento
-        await new Promise(resolve => setTimeout(resolve, intervaloMovimiento));
-    }
-
-    console.log(`Taxi ${id} ha regresado a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
-}
-
 // Función principal
 (async () => {
     const socketReq = new zmq.Request();
     const socketPub = new zmq.Publisher();
+    const socketSub = new zmq.Subscriber();
 
-    await socketReq.connect(serverRepAddress); // Conectar para registro y notificación de servicio
+    await socketReq.connect(serverRepAddress); // Conectar para registro y actualizaciones
     await socketPub.connect(serverPubAddress); // Conectar para enviar posiciones
+    await socketSub.connect(serverPubAddress); // Conectar para recibir asignaciones
+
+    // Suscribirse al tema de asignación específico para este taxi
+    const assignmentTopic = `assignment-${id}`;
+    socketSub.subscribe(assignmentTopic);
+    console.log(`Taxi ${id} suscrito a '${assignmentTopic}' para recibir asignaciones.`);
 
     // Función para registrar el taxi en el servidor central
     async function registrarTaxi() {
@@ -133,24 +111,49 @@ async function regresarAPosicionInicial(intervaloMovimiento) {
         }
     }
 
+    // Función para regresar a la posición inicial paso a paso
+    async function regresarAPosicionInicial(intervaloMovimiento) {
+        while (x !== taxi.posicionInicial.x || y !== taxi.posicionInicial.y) {
+            // Determinar dirección para X
+            if (x < taxi.posicionInicial.x && x < n - 1) {
+                x += 1;
+            } else if (x > taxi.posicionInicial.x && x > 0) {
+                x -= 1;
+            }
+
+            // Determinar dirección para Y
+            if (y < taxi.posicionInicial.y && y < m - 1) {
+                y += 1;
+            } else if (y > taxi.posicionInicial.y && y > 0) {
+                y -= 1;
+            }
+
+            // Enviar nueva posición al servidor
+            const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
+            await socketPub.send(JSON.stringify(nuevaPosicion));
+            console.log(`Taxi ${id} regresó a (${x}, ${y})`);
+
+            // Esperar el intervalo de movimiento
+            await new Promise(resolve => setTimeout(resolve, intervaloMovimiento));
+        }
+
+        console.log(`Taxi ${id} ha regresado a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
+    }
+
     // Llamada inicial de registro
     await registrarTaxi();
 
-    // Definir cantidad de celdas a mover por intervalo según la velocidad
+    // Definir intervalo de movimiento según la velocidad
     let intervaloMovimiento;
-    let celdasPorMovimiento;
     switch (velocidad) {
         case 1:
             intervaloMovimiento = 60 * 1000; // 60 segundos reales = 60 minutos simulados
-            celdasPorMovimiento = 1;
             break;
         case 2:
             intervaloMovimiento = 30 * 1000; // 30 segundos reales = 30 minutos simulados
-            celdasPorMovimiento = 1;
             break;
         case 4:
             intervaloMovimiento = 15 * 1000; // 15 segundos reales = 15 minutos simulados
-            celdasPorMovimiento = 2;
             break;
         default:
             console.error("Velocidad inválida. Las velocidades válidas son 1, 2 y 4 km/h.");
@@ -170,54 +173,35 @@ async function regresarAPosicionInicial(intervaloMovimiento) {
         }, intervaloMovimiento);
     }
 
-    // Función para gestionar servicios
-    async function gestionarServicios() {
-        for await (const [msg] of socketReq) {
-            const solicitud = JSON.parse(msg.toString());
-
-            if (solicitud.idTaxi === id && serviciosRealizados < maxServicios) {
-                try {
-                    taxi.asignarServicio();
-                } catch (error) {
-                    console.error(error.message);
-                    await socketReq.send(JSON.stringify({ exito: false, mensaje: error.message }));
-                    continue;
-                }
-
-                ocupado = taxi.ocupado;
-                serviciosRealizados = taxi.serviciosRealizados;
-                console.log(`Taxi ${id} asignado a un servicio. Atendiendo al Usuario ${solicitud.idUsuario}.`);
-
-                // **Agregar el mensaje solicitado aquí**
+    // Función para manejar asignaciones recibidas
+    async function manejarAsignacion() {
+        for await (const [topic, msg] of socketSub) {
+            const asignacion = JSON.parse(msg.toString());
+            if (asignacion.type === 'assignment') {
                 console.log(`Taxi ${id} ocupado... entrando en timeout`);
 
-                // Notificar al servidor que está ocupado
-                await socketPub.send(JSON.stringify({ id: id, x: x, y: y, ocupado: ocupado }));
+                // Marcar como ocupado
+                ocupado = true;
+                serviciosRealizados += 1;
 
-                // Simulación de servicio de 30 segundos (30 minutos simulados)
-                await new Promise(resolve => setTimeout(resolve, 30000));
+                // Simular servicio (timeout)
+                setTimeout(async () => {
+                    // Finalizar servicio
+                    ocupado = false;
+                    console.log(`Taxi ${id} ha completado el servicio y está disponible.`);
 
-                // Finalizar el servicio
-                taxi.finalizarServicio();
-                ocupado = taxi.ocupado;
-                console.log(`Taxi ${id} ha completado el servicio y está disponible.`);
+                    // Regresar a la posición inicial
+                    console.log(`Taxi ${id} comenzará a regresar a la posición inicial (${xInicial}, ${yInicial}).`);
+                    await regresarAPosicionInicial(intervaloMovimiento);
 
-                // Notificar al servidor que está disponible
-                await socketPub.send(JSON.stringify({ id: id, x: x, y: y, ocupado: ocupado }));
-
-                // Verificar si se alcanzó el límite de servicios
-                if (serviciosRealizados >= maxServicios) {
-                    console.log(`Taxi ${id} ha completado el máximo de servicios diarios y finaliza su operación.`);
-                    process.exit(0);
-                }
-
-                // Iniciar el regreso a la posición inicial
-                console.log(`Taxi ${id} comenzará a regresar a la posición inicial (${xInicial}, ${yInicial}).`);
-                regresarAPosicionInicial(intervaloMovimiento);
+                    // Notificar al servidor de la nueva posición y disponibilidad
+                    const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
+                    await socketPub.send(JSON.stringify(nuevaPosicion));
+                }, 30000); // 30 segundos para simular el servicio
             }
         }
     }
 
     enviarPosicion();
-    gestionarServicios();
+    manejarAsignacion();
 })();

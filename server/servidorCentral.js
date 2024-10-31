@@ -15,11 +15,11 @@ class ServidorCentral {
 
     // Inicializar el servidor y sus sockets
     async iniciar() {
-        await this.socketPub.bind(serverPubAddress); // Publicar posiciones de taxis
+        await this.socketPub.bind(serverPubAddress); // Publicar asignaciones de servicios
         await this.socketRep.bind(serverRepAddress); // Recibir registros y solicitudes de usuarios
 
-        console.log(`Servidor Central iniciado en ${serverPubAddress} (posiciones) y ${serverRepAddress} (solicitudes)`);
-
+        console.log(`Servidor Central iniciado en ${serverPubAddress} (asignaciones) y ${serverRepAddress} (registros y solicitudes)`);
+        
         this.recibirRegistroTaxis(); // Manejar registros de taxis y solicitudes de usuarios
     }
 
@@ -43,7 +43,7 @@ class ServidorCentral {
     }
 
     // Asignar taxi más cercano disponible
-    asignarTaxi(solicitud) {
+    async asignarTaxi(solicitud) {
         const { idUsuario, x, y } = solicitud;
         console.log(`Recibida solicitud de taxi para Usuario ${idUsuario} en posición (${x}, ${y})`);
 
@@ -75,6 +75,17 @@ class ServidorCentral {
         this.taxis[taxiSeleccionado.id].ocupado = true;
 
         console.log(`Asignando Taxi ${taxiSeleccionado.id} al Usuario ${idUsuario} en posición (${x}, ${y})`);
+
+        // Enviar mensaje de asignación al taxi seleccionado
+        const assignmentTopic = `assignment-${taxiSeleccionado.id}`;
+        const assignmentMessage = JSON.stringify({
+            type: 'assignment',
+            userId: idUsuario,
+            userX: x,
+            userY: y
+        });
+        this.socketPub.send([assignmentTopic, assignmentMessage]);
+
         return { exito: true, idTaxi: taxiSeleccionado.id, x: taxiSeleccionado.x, y: taxiSeleccionado.y };
     }
 
@@ -91,7 +102,7 @@ class ServidorCentral {
             }
             // Verificar si es una solicitud de usuario
             else if (solicitud.idUsuario !== undefined && solicitud.x !== undefined && solicitud.y !== undefined) {
-                const respuesta = this.asignarTaxi(solicitud);
+                const respuesta = await this.asignarTaxi(solicitud);
                 await this.socketRep.send(JSON.stringify(respuesta));
             }
             else {
