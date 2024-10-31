@@ -1,3 +1,4 @@
+// server/servidorCentral.js
 require("dotenv").config();
 const zmq = require("zeromq");
 
@@ -14,66 +15,105 @@ class ServidorCentral {
 
     // Inicializar el servidor y sus sockets
     async iniciar() {
-        await this.socketPub.bind(serverPubAddress); // Publicar posiciones de taxis
+        await this.socketPub.bind(serverPubAddress); // Publicar asignaciones de servicios
         await this.socketRep.bind(serverRepAddress); // Recibir registros y solicitudes de usuarios
 
-        console.log(`Servidor Central iniciado en ${serverPubAddress} (posiciones) y ${serverRepAddress} (solicitudes)`);
-
+        console.log(`Servidor Central iniciado en ${serverPubAddress} (asignaciones) y ${serverRepAddress} (registros y solicitudes)`);
+        
         this.recibirRegistroTaxis(); // Manejar registros de taxis y solicitudes de usuarios
+    }
+
+    // Método para calcular la distancia Manhattan
+    calcularDistancia(x1, y1, x2, y2) {
+        return Math.abs(x1 - x2) + Math.abs(y1 - y2);
     }
 
     // Registrar un taxi y marcarlo como disponible
     registrarTaxis(taxi) {
         if (!this.taxis[taxi.id]) {
-            this.taxis[taxi.id] = { ...taxi, ocupado: false }; // Marcar como disponible
+            this.taxis[taxi.id] = { ...taxi, ocupado: false };
             console.log(`Taxi ${taxi.id} registrado en posición (${taxi.x}, ${taxi.y}), disponible.`);
         } else {
-            console.log(`Taxi ${taxi.id} ya registrado.`);
+            // Actualizar posición y estado
+            this.taxis[taxi.id].x = taxi.x;
+            this.taxis[taxi.id].y = taxi.y;
+            this.taxis[taxi.id].ocupado = taxi.ocupado;
+            console.log(`Actualizando Taxi ${taxi.id} a posición (${taxi.x}, ${taxi.y}), ocupado: ${taxi.ocupado}`);
         }
     }
 
-    // Método para recibir registros de taxis y confirmar registro
+    // Asignar taxi más cercano disponible
+    async asignarTaxi(solicitud) {
+        const { idUsuario, x, y } = solicitud;
+        console.log(`Recibida solicitud de taxi para Usuario ${idUsuario} en posición (${x}, ${y})`);
+
+        // Filtrar taxis disponibles
+        const taxisDisponibles = Object.values(this.taxis).filter(taxi => !taxi.ocupado);
+        console.log(`Taxis disponibles: ${taxisDisponibles.map(taxi => taxi.id).join(", ") || "Ninguno"}`);
+
+        if (taxisDisponibles.length === 0) {
+            console.log(`No hay taxis disponibles para el Usuario ${idUsuario}`);
+            return { exito: false, mensaje: "No hay taxis disponibles en este momento" };
+        }
+
+        // Calcular distancias
+        taxisDisponibles.forEach(taxi => {
+            taxi.distancia = this.calcularDistancia(x, y, taxi.x, taxi.y);
+        });
+
+        // Encontrar la distancia mínima
+        const distanciaMinima = Math.min(...taxisDisponibles.map(taxi => taxi.distancia));
+
+        // Filtrar taxis con la distancia mínima
+        const taxisCercanos = taxisDisponibles.filter(taxi => taxi.distancia === distanciaMinima);
+
+        // Seleccionar el taxi con el menor ID en caso de empate
+        taxisCercanos.sort((a, b) => a.id - b.id);
+        const taxiSeleccionado = taxisCercanos[0];
+
+        // Marcar como ocupado
+        this.taxis[taxiSeleccionado.id].ocupado = true;
+
+        console.log(`Asignando Taxi ${taxiSeleccionado.id} al Usuario ${idUsuario} en posición (${x}, ${y})`);
+
+        // Enviar mensaje de asignación al taxi seleccionado
+        const assignmentTopic = `assignment-${taxiSeleccionado.id}`;
+        const assignmentMessage = JSON.stringify({
+            type: 'assignment',
+            userId: idUsuario,
+            userX: x,
+            userY: y
+        });
+        this.socketPub.send([assignmentTopic, assignmentMessage]);
+
+        return { exito: true, idTaxi: taxiSeleccionado.id, x: taxiSeleccionado.x, y: taxiSeleccionado.y };
+    }
+
+    // Método para recibir registros de taxis y solicitudes de usuarios
     async recibirRegistroTaxis() {
         for await (const [msg] of this.socketRep) {
             const solicitud = JSON.parse(msg.toString());
 
-            // Confirmar que la solicitud es un registro o una solicitud de usuario
-            if (solicitud.id && solicitud.x !== undefined && solicitud.y !== undefined && solicitud.ocupado === false) {
+            // Verificar si es un registro de taxi
+            if (solicitud.id !== undefined && solicitud.x !== undefined && solicitud.y !== undefined && solicitud.ocupado !== undefined) {
                 this.registrarTaxis(solicitud);
-                console.log(`Taxi ${solicitud.id} registrado correctamente.`);
-                await this.socketRep.send(JSON.stringify({ exito: true })); // Confirmación al taxi
-            } else if (solicitud.idUsuario) {
-                const respuesta = this.asignarTaxi(solicitud);
-                await this.socketRep.send(JSON.stringify(respuesta));
-            } else {
-                console.log(`Error en solicitud recibida: datos incompletos.`);
-                await this.socketRep.send(JSON.stringify({ exito: false }));
+                // Enviar confirmación al taxi
+                await this.socketRep.send(JSON.stringify({ exito: true }));
             }
-        }
-    }
-
-    // Asignar taxi disponible a un usuario
-    asignarTaxi(solicitud) {
-        const { idUsuario, x, y } = solicitud;
-        console.log("Evaluando taxis disponibles...");
-
-        // Verificar taxis disponibles
-        const taxisDisponibles = Object.values(this.taxis).filter(taxi => !taxi.ocupado);
-        console.log("Taxis disponibles:", taxisDisponibles.map(taxi => taxi.id));
-
-        if (taxisDisponibles.length > 0) {
-            const taxiDisponible = taxisDisponibles[0]; // Seleccionar el primer taxi disponible
-            this.taxis[taxiDisponible.id].ocupado = true; // Marcar como ocupado en el registro del servidor
-
-            console.log(`Asignando Taxi ${taxiDisponible.id} al Usuario ${idUsuario} en posición (${x}, ${y})`);
-            return { exito: true, idTaxi: taxiDisponible.id, x: taxiDisponible.x, y: taxiDisponible.y };
-        } else {
-            console.log(`No hay taxis disponibles para el Usuario ${idUsuario}`);
-            return { exito: false, mensaje: "No hay taxis disponibles en este momento" };
+            // Verificar si es una solicitud de usuario
+            else if (solicitud.idUsuario !== undefined && solicitud.x !== undefined && solicitud.y !== undefined) {
+                const respuesta = await this.asignarTaxi(solicitud);
+                await this.socketRep.send(JSON.stringify(respuesta));
+            }
+            else {
+                console.log("Error en solicitud recibida: datos incompletos o mal formados.");
+                await this.socketRep.send(JSON.stringify({ exito: false, mensaje: "Datos incompletos o mal formados." }));
+            }
         }
     }
 }
 
-// Iniciar el servidor
-const servidorCentral = new ServidorCentral();
-servidorCentral.iniciar();
+(async () => {
+    const servidorCentral = new ServidorCentral();
+    await servidorCentral.iniciar();
+})();
