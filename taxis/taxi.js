@@ -78,14 +78,50 @@ function moverTaxi() {
     }
 }
 
-// Función principal
+// Función para regresar a la posición inicial paso a paso
+async function regresarAPosicionInicial(intervaloMovimiento, socketReq) {
+    while (x !== taxi.posicionInicial.x || y !== taxi.posicionInicial.y) {
+        // Determinar dirección para X
+        if (x < taxi.posicionInicial.x && x < n - 1) {
+            x += 1;
+        } else if (x > taxi.posicionInicial.x && x > 0) {
+            x -= 1;
+        }
+
+        // Determinar dirección para Y
+        if (y < taxi.posicionInicial.y && y < m - 1) {
+            y += 1;
+        } else if (y > taxi.posicionInicial.y && y > 0) {
+            y -= 1;
+        }
+
+        // Enviar nueva posición al servidor
+        const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
+        try {
+            await socketReq.send(JSON.stringify(nuevaPosicion));
+            const [msg] = await socketReq.receive();
+            const respuesta = JSON.parse(msg.toString());
+            if (!respuesta.exito) {
+                console.error(`Error al actualizar posición del Taxi ${id}: ${respuesta.mensaje}`);
+            }
+        } catch (error) {
+            console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
+        }
+
+        console.log(`Taxi ${id} regresó a (${x}, ${y})`);
+
+        // Esperar el intervalo de movimiento
+        await new Promise(resolve => setTimeout(resolve, intervaloMovimiento));
+    }
+
+    console.log(`Taxi ${id} ha regresado a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
+}
+
 (async () => {
     const socketReq = new zmq.Request();
-    const socketPub = new zmq.Publisher();
     const socketSub = new zmq.Subscriber();
 
     await socketReq.connect(serverRepAddress); // Conectar para registro y actualizaciones
-    await socketPub.connect(serverPubAddress); // Conectar para enviar posiciones
     await socketSub.connect(serverPubAddress); // Conectar para recibir asignaciones
 
     // Suscribirse al tema de asignación específico para este taxi
@@ -104,40 +140,27 @@ function moverTaxi() {
             console.log(`Taxi ${id} registrado exitosamente en el servidor central.`);
             console.log(`Posición inicial: (${xInicial}, ${yInicial})`);
             // Enviar la posición inicial al servidor
-            await socketPub.send(JSON.stringify(mensajeRegistro));
+            await socketReq.send(JSON.stringify(mensajeRegistro));
+            const [msgPos] = await socketReq.receive();
+            const respuestaPos = JSON.parse(msgPos.toString());
+            if (!respuestaPos.exito) {
+                console.error(`Error al enviar posición inicial del Taxi ${id}: ${respuestaPos.mensaje}`);
+            }
         } else {
             console.error(`Error al registrar Taxi ${id} en el servidor central.`);
             process.exit(1);
         }
     }
 
-    // Función para regresar a la posición inicial paso a paso
-    async function regresarAPosicionInicial(intervaloMovimiento) {
-        while (x !== taxi.posicionInicial.x || y !== taxi.posicionInicial.y) {
-            // Determinar dirección para X
-            if (x < taxi.posicionInicial.x && x < n - 1) {
-                x += 1;
-            } else if (x > taxi.posicionInicial.x && x > 0) {
-                x -= 1;
-            }
+    // Función para regresar a la posición inicial y finalizar el proceso si se alcanza el máximo de servicios
+    async function regresarAPosicionInicialFinal(intervaloMovimiento, socketReq) {
+        await regresarAPosicionInicial(intervaloMovimiento, socketReq);
 
-            // Determinar dirección para Y
-            if (y < taxi.posicionInicial.y && y < m - 1) {
-                y += 1;
-            } else if (y > taxi.posicionInicial.y && y > 0) {
-                y -= 1;
-            }
-
-            // Enviar nueva posición al servidor
-            const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
-            await socketPub.send(JSON.stringify(nuevaPosicion));
-            console.log(`Taxi ${id} regresó a (${x}, ${y})`);
-
-            // Esperar el intervalo de movimiento
-            await new Promise(resolve => setTimeout(resolve, intervaloMovimiento));
+        // Verificar si ha alcanzado el máximo de servicios
+        if (serviciosRealizados >= maxServicios) {
+            console.log(`Taxi ${id} ha alcanzado el máximo de servicios (${maxServicios}). Finalizando proceso.`);
+            process.exit(0);
         }
-
-        console.log(`Taxi ${id} ha regresado a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
     }
 
     // Llamada inicial de registro
@@ -169,7 +192,18 @@ function moverTaxi() {
 
             // Enviar nueva posición
             const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
-            await socketPub.send(JSON.stringify(nuevaPosicion));
+            try {
+                await socketReq.send(JSON.stringify(nuevaPosicion));
+                const [msg] = await socketReq.receive();
+                const respuesta = JSON.parse(msg.toString());
+                if (!respuesta.exito) {
+                    console.error(`Error al actualizar posición del Taxi ${id}: ${respuesta.mensaje}`);
+                }
+            } catch (error) {
+                console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
+            }
+
+            console.log(`Taxi ${id} se movió a (${x}, ${y})`);
         }, intervaloMovimiento);
     }
 
@@ -192,11 +226,20 @@ function moverTaxi() {
 
                     // Regresar a la posición inicial
                     console.log(`Taxi ${id} comenzará a regresar a la posición inicial (${xInicial}, ${yInicial}).`);
-                    await regresarAPosicionInicial(intervaloMovimiento);
+                    await regresarAPosicionInicialFinal(intervaloMovimiento, socketReq);
 
                     // Notificar al servidor de la nueva posición y disponibilidad
                     const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
-                    await socketPub.send(JSON.stringify(nuevaPosicion));
+                    try {
+                        await socketReq.send(JSON.stringify(nuevaPosicion));
+                        const [msgPos] = await socketReq.receive();
+                        const respuestaPos = JSON.parse(msgPos.toString());
+                        if (!respuestaPos.exito) {
+                            console.error(`Error al actualizar posición del Taxi ${id}: ${respuestaPos.mensaje}`);
+                        }
+                    } catch (error) {
+                        console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
+                    }
                 }, 30000); // 30 segundos para simular el servicio
             }
         }
