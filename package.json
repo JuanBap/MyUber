@@ -1,0 +1,16 @@
+{
+  "name": "myuber",
+  "version": "1.0.0",
+  "description": "Proyecto de la asignatura de Introducción a Sistemas Distribuidos",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Juan Pablo Cañón",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.7.3",
+    "zeromq": "^6.1.1"
+  }
+}
