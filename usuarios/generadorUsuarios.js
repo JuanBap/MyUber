@@ -16,6 +16,12 @@ const serverRepAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PO
 // Cargar los argumentos de entrada
 const [numUsuarios, n, m, archivoPosiciones] = process.argv.slice(2);
 
+// Validar argumentos
+if (!numUsuarios || !n || !m || !archivoPosiciones) {
+    console.error("Uso: node generadorUsuarios.js <numUsuarios> <N> <M> <archivoPosiciones>");
+    process.exit(1);
+}
+
 // Leer archivo de posiciones usando la ruta ajustada
 const rutaArchivoPosiciones = path.resolve(archivoPosiciones);
 if (!fs.existsSync(rutaArchivoPosiciones)) {

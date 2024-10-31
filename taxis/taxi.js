@@ -59,7 +59,7 @@ function moverTaxi() {
             // Cambiar dirección aleatoriamente en el siguiente movimiento
             direccionX = Math.random() < 0.5 ? 1 : -1;
         } else {
-            console.log(`Taxi ${id} ha llegado al borde en X (${x}) y se detiene en esa dirección.`);
+            console.log(`Taxi ${id} ha llegado al borde en X (${x}) y cambia de dirección.`);
             // Cambiar dirección para evitar detenerse indefinidamente
             direccionX = -direccionX;
         }
@@ -71,7 +71,7 @@ function moverTaxi() {
             // Cambiar dirección aleatoriamente en el siguiente movimiento
             direccionY = Math.random() < 0.5 ? 1 : -1;
         } else {
-            console.log(`Taxi ${id} ha llegado al borde en Y (${y}) y se detiene en esa dirección.`);
+            console.log(`Taxi ${id} ha llegado al borde en Y (${y}) y cambia de dirección.`);
             // Cambiar dirección para evitar detenerse indefinidamente
             direccionY = -direccionY;
         }
@@ -149,7 +149,7 @@ async function regresarAPosicionInicial(intervaloMovimiento) {
             celdasPorMovimiento = 1;
             break;
         case 4:
-            intervaloMovimiento = 30 * 1000; // 30 segundos reales = 30 minutos simulados
+            intervaloMovimiento = 15 * 1000; // 15 segundos reales = 15 minutos simulados
             celdasPorMovimiento = 2;
             break;
         default:
@@ -188,6 +188,9 @@ async function regresarAPosicionInicial(intervaloMovimiento) {
                 serviciosRealizados = taxi.serviciosRealizados;
                 console.log(`Taxi ${id} asignado a un servicio. Atendiendo al Usuario ${solicitud.idUsuario}.`);
 
+                // **Agregar el mensaje solicitado aquí**
+                console.log(`Taxi ${id} ocupado... entrando en timeout`);
+
                 // Notificar al servidor que está ocupado
                 await socketPub.send(JSON.stringify({ id: id, x: x, y: y, ocupado: ocupado }));
 
@@ -209,6 +212,7 @@ async function regresarAPosicionInicial(intervaloMovimiento) {
                 }
 
                 // Iniciar el regreso a la posición inicial
+                console.log(`Taxi ${id} comenzará a regresar a la posición inicial (${xInicial}, ${yInicial}).`);
                 regresarAPosicionInicial(intervaloMovimiento);
             }
         }
