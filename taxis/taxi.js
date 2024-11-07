@@ -1,7 +1,6 @@
 // taxis/taxi.js
 require("dotenv").config();
 const zmq = require("zeromq");
-const Taxi = require("../model/taxi");
 
 // Parámetros de entrada
 const id = parseInt(process.argv[2]);
@@ -27,111 +26,29 @@ if (xInicial < 0 || xInicial >= n || yInicial < 0 || yInicial >= m) {
     process.exit(1);
 }
 
-// Crear instancia del Taxi
-let taxi;
-try {
-    taxi = new Taxi(id, xInicial, yInicial, velocidad, maxServicios);
-} catch (error) {
-    console.error(`Error al crear el Taxi: ${error.message}`);
-    process.exit(1);
-}
-
 // Estado inicial del taxi
-let x = taxi.x;
-let y = taxi.y;
-let ocupado = taxi.ocupado;
-let serviciosRealizados = taxi.serviciosRealizados;
+let x = xInicial;
+let y = yInicial;
+let ocupado = false;
+let serviciosRealizados = 0; // Contador de servicios completados
 
-// Direcciones actuales (1 para adelante, -1 para atrás)
-let direccionX = 1;
-let direccionY = 1;
-
-// Función para mover el taxi en una dirección
-function moverTaxi() {
-    // Decidir aleatoriamente si mover en X o Y
-    const moverEnX = Math.random() < 0.5;
-
-    if (moverEnX) {
-        // Intentar mover en X
-        if ((direccionX === 1 && x < n - 1) || (direccionX === -1 && x > 0)) {
-            x += direccionX;
-            console.log(`Taxi ${id} se movió a (${x}, ${y})`);
-            // Cambiar dirección aleatoriamente en el siguiente movimiento
-            direccionX = Math.random() < 0.5 ? 1 : -1;
-        } else {
-            console.log(`Taxi ${id} ha llegado al borde en X (${x}) y cambia de dirección.`);
-            // Cambiar dirección para evitar detenerse indefinidamente
-            direccionX = -direccionX;
-        }
-    } else {
-        // Intentar mover en Y
-        if ((direccionY === 1 && y < m - 1) || (direccionY === -1 && y > 0)) {
-            y += direccionY;
-            console.log(`Taxi ${id} se movió a (${x}, ${y})`);
-            // Cambiar dirección aleatoriamente en el siguiente movimiento
-            direccionY = Math.random() < 0.5 ? 1 : -1;
-        } else {
-            console.log(`Taxi ${id} ha llegado al borde en Y (${y}) y cambia de dirección.`);
-            // Cambiar dirección para evitar detenerse indefinidamente
-            direccionY = -direccionY;
-        }
-    }
-}
-
-// Función para regresar a la posición inicial paso a paso
-async function regresarAPosicionInicial(intervaloMovimiento, socketReq) {
-    while (x !== taxi.posicionInicial.x || y !== taxi.posicionInicial.y) {
-        // Determinar dirección para X
-        if (x < taxi.posicionInicial.x && x < n - 1) {
-            x += 1;
-        } else if (x > taxi.posicionInicial.x && x > 0) {
-            x -= 1;
-        }
-
-        // Determinar dirección para Y
-        if (y < taxi.posicionInicial.y && y < m - 1) {
-            y += 1;
-        } else if (y > taxi.posicionInicial.y && y > 0) {
-            y -= 1;
-        }
-
-        // Enviar nueva posición al servidor
-        const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
-        try {
-            await socketReq.send(JSON.stringify(nuevaPosicion));
-            const [msg] = await socketReq.receive();
-            const respuesta = JSON.parse(msg.toString());
-            if (!respuesta.exito) {
-                console.error(`Error al actualizar posición del Taxi ${id}: ${respuesta.mensaje}`);
-            }
-        } catch (error) {
-            console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
-        }
-
-        console.log(`Taxi ${id} regresó a (${x}, ${y})`);
-
-        // Esperar el intervalo de movimiento
-        await new Promise(resolve => setTimeout(resolve, intervaloMovimiento));
-    }
-
-    console.log(`Taxi ${id} ha regresado a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
-}
-
+// Función principal
 (async () => {
     const socketReq = new zmq.Request();
     const socketSub = new zmq.Subscriber();
 
-    await socketReq.connect(serverRepAddress); // Conectar para registro y actualizaciones
-    await socketSub.connect(serverPubAddress); // Conectar para recibir asignaciones
+    // Conectar al servidor para solicitudes y actualizaciones
+    await socketReq.connect(serverRepAddress); // REQ-REP para registro y actualizaciones
 
-    // Suscribirse al tema de asignación específico para este taxi
+    // Conectar al servidor para recibir asignaciones
+    await socketSub.connect(serverPubAddress); // PUB-SUB para asignaciones
     const assignmentTopic = `assignment-${id}`;
     socketSub.subscribe(assignmentTopic);
     console.log(`Taxi ${id} suscrito a '${assignmentTopic}' para recibir asignaciones.`);
 
     // Función para registrar el taxi en el servidor central
     async function registrarTaxi() {
-        const mensajeRegistro = { id: id, x: x, y: y, ocupado: false };
+        const mensajeRegistro = { type: 'register', id: id, x: x, y: y, ocupado: false };
         await socketReq.send(JSON.stringify(mensajeRegistro));
         const [msg] = await socketReq.receive();
         const respuesta = JSON.parse(msg.toString());
@@ -139,61 +56,34 @@ async function regresarAPosicionInicial(intervaloMovimiento, socketReq) {
         if (respuesta.exito) {
             console.log(`Taxi ${id} registrado exitosamente en el servidor central.`);
             console.log(`Posición inicial: (${xInicial}, ${yInicial})`);
-            // Enviar la posición inicial al servidor
-            await socketReq.send(JSON.stringify(mensajeRegistro));
-            const [msgPos] = await socketReq.receive();
-            const respuestaPos = JSON.parse(msgPos.toString());
-            if (!respuestaPos.exito) {
-                console.error(`Error al enviar posición inicial del Taxi ${id}: ${respuestaPos.mensaje}`);
-            }
         } else {
             console.error(`Error al registrar Taxi ${id} en el servidor central.`);
             process.exit(1);
         }
     }
 
-    // Función para regresar a la posición inicial y finalizar el proceso si se alcanza el máximo de servicios
-    async function regresarAPosicionInicialFinal(intervaloMovimiento, socketReq) {
-        await regresarAPosicionInicial(intervaloMovimiento, socketReq);
-
-        // Verificar si ha alcanzado el máximo de servicios
-        if (serviciosRealizados >= maxServicios) {
-            console.log(`Taxi ${id} ha alcanzado el máximo de servicios (${maxServicios}). Finalizando proceso.`);
-            process.exit(0);
-        }
-    }
-
     // Llamada inicial de registro
     await registrarTaxi();
 
-    // Definir intervalo de movimiento según la velocidad
-    let intervaloMovimiento;
-    switch (velocidad) {
-        case 1:
-            intervaloMovimiento = 60 * 1000; // 60 segundos reales = 60 minutos simulados
-            break;
-        case 2:
-            intervaloMovimiento = 30 * 1000; // 30 segundos reales = 30 minutos simulados
-            break;
-        case 4:
-            intervaloMovimiento = 15 * 1000; // 15 segundos reales = 15 minutos simulados
-            break;
-        default:
-            console.error("Velocidad inválida. Las velocidades válidas son 1, 2 y 4 km/h.");
-            process.exit(1);
-    }
+    // Calcular el intervalo de movimiento en función de la velocidad
+    const minutosSimuladosPorSegundo = 1; // Cada segundo en tiempo real es un minuto en el sistema
+    const intervaloMovimiento = (60 * 1000) / (velocidad * minutosSimuladosPorSegundo); // Intervalo en ms
 
     // Función para mover el taxi y enviar posición
     async function enviarPosicion() {
         setInterval(async () => {
             if (ocupado || serviciosRealizados >= maxServicios) return; // No se mueve si está ocupado o alcanzó el límite
 
-            moverTaxi();
+            // Alterna movimiento horizontal y vertical
+            if (Math.random() < 0.5) {
+                x = x < n - 1 ? x + 1 : x - 1; // Mover en x
+            } else {
+                y = y < m - 1 ? y + 1 : y - 1; // Mover en y
+            }
 
-            // Enviar nueva posición
-            const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
+            const nuevaPosicion = { type: 'update', id: id, x: x, y: y, ocupado: ocupado };
             try {
-                await socketReq.send(JSON.stringify(nuevaPosicion));
+                await socketReq.send(JSON.stringify(nuevaPosicion)); // Enviar la nueva posición
                 const [msg] = await socketReq.receive();
                 const respuesta = JSON.parse(msg.toString());
                 if (!respuesta.exito) {
@@ -218,20 +108,18 @@ async function regresarAPosicionInicial(intervaloMovimiento, socketReq) {
                 ocupado = true;
                 serviciosRealizados += 1;
 
-                // Simular servicio (timeout)
+                // Simular servicio de 30 segundos
                 setTimeout(async () => {
                     // Finalizar servicio
                     ocupado = false;
                     console.log(`Taxi ${id} ha completado el servicio y está disponible.`);
 
                     // Regresar a la posición inicial
-                    console.log(`Taxi ${id} comenzará a regresar a la posición inicial (${xInicial}, ${yInicial}).`);
-                    await regresarAPosicionInicialFinal(intervaloMovimiento, socketReq);
-
-                    // Notificar al servidor de la nueva posición y disponibilidad
-                    const nuevaPosicion = { id: id, x: x, y: y, ocupado: ocupado };
+                    x = xInicial;
+                    y = yInicial;
+                    const mensajeFinalizacion = { type: 'update', id: id, x: x, y: y, ocupado: false };
                     try {
-                        await socketReq.send(JSON.stringify(nuevaPosicion));
+                        await socketReq.send(JSON.stringify(mensajeFinalizacion)); // Actualizar posición inicial
                         const [msgPos] = await socketReq.receive();
                         const respuestaPos = JSON.parse(msgPos.toString());
                         if (!respuestaPos.exito) {
@@ -239,6 +127,30 @@ async function regresarAPosicionInicial(intervaloMovimiento, socketReq) {
                         }
                     } catch (error) {
                         console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
+                    }
+
+                    console.log(`Taxi ${id} volvió a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
+
+                    // Verificar si se alcanzó el límite de servicios
+                    if (serviciosRealizados >= maxServicios) {
+                        console.log(`Taxi ${id} ha completado el máximo de servicios diarios y finaliza su operación.`);
+
+                        // Enviar mensaje de desregistro antes de salir
+                        const mensajeDesregistro = { type: 'deregister', id: id };
+                        try {
+                            await socketReq.send(JSON.stringify(mensajeDesregistro));
+                            const [msgDesreg] = await socketReq.receive();
+                            const respuestaDesreg = JSON.parse(msgDesreg.toString());
+                            if (respuestaDesreg.exito) {
+                                console.log(`Taxi ${id} desregistrado correctamente del servidor central.`);
+                            } else {
+                                console.error(`Error al desregistrar Taxi ${id}: ${respuestaDesreg.mensaje}`);
+                            }
+                        } catch (error) {
+                            console.error(`Error al desregistrar Taxi ${id}: ${error.message}`);
+                        }
+
+                        process.exit(0);
                     }
                 }, 30000); // 30 segundos para simular el servicio
             }
