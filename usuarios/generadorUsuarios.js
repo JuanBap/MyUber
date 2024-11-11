@@ -27,6 +27,7 @@ try {
 
 async function crearUsuario(id, x, y) {
     const socketReq = new zmq.Request();
+    console.log(`Usuario ${id}: Conectando a ${serverRepAddress}`);
     await socketReq.connect(serverRepAddress);
 
     async function solicitarTaxi(tiempoEsperaInicial) {
@@ -48,17 +49,16 @@ async function crearUsuario(id, x, y) {
                 console.log(`Usuario ${id}: Taxi asignado (ID: ${respuesta.idTaxi}) en ${tiempoRespuesta} segundos.`);
                 await socketReq.close();
             } else {
-                console.log(`Usuario ${id}: ${respuesta.mensaje}. Reintentando en 15 segundos.`);
-                setTimeout(() => solicitarTaxi(15), 15000); // Reintentar en 15 segundos
+                console.log(`Usuario ${id}: ${respuesta.mensaje}. Tiempo de respuesta: ${tiempoRespuesta} segundos.`);
+                await socketReq.close();
             }
         } catch (error) {
             if (error.message === 'timeout') {
-                console.log(`Usuario ${id}: Tiempo de espera agotado, reintentando en 15 segundos.`);
-                setTimeout(() => solicitarTaxi(15), 15000); // Reintentar en 15 segundos
+                console.log(`Usuario ${id}: Tiempo de espera agotado, tiempo de respuesta: 5.000 segundos.`);
             } else {
                 console.log(`Usuario ${id}: Error en la solicitud: ${error.message}`);
-                await socketReq.close();
             }
+            await socketReq.close();
         }
     }
 
