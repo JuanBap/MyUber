@@ -16,7 +16,7 @@
   "license": "MIT",
   "dependencies": {
     "dotenv": "^16.4.5",
-    "mongoose": "^8.7.3",
-    "zeromq": "^6.1.1"
+    "mongoose": "^8.8.1",
+    "zeromq": "^6.1.2"
   }
 }
