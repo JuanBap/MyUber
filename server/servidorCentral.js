@@ -99,6 +99,10 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
             } else {
                 await repSocket.send(JSON.stringify({ exito: false, mensaje: "No hay taxis disponibles." }));
             }
+        } else if (mensaje.type === 'healthcheck') {
+            // Manejo de solicitudes de healthcheck
+            await repSocket.send(JSON.stringify({ estado: "Activo" }));
+            console.log(`Healthcheck recibido. Estado: Activo.`);
         } else {
             // Tipo de mensaje desconocido
             await repSocket.send(JSON.stringify({ exito: false, mensaje: "Tipo de mensaje desconocido." }));
