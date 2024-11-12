@@ -3,13 +3,18 @@ require('dotenv').config();
 const zmq = require('zeromq');
 const fs = require('fs');
 const path = require('path');
+const process = require('process');
 
-if (!process.env.SERVER_IP || !process.env.SERVER_PORT_REP) {
-    throw new Error("Las variables de entorno SERVER_IP o SERVER_PORT_REP no están definidas");
+if (!process.env.BROKER_PORT || !process.env.BROKER_PUB_PORT) {
+    throw new Error("Las variables de entorno BROKER_PORT o BROKER_PUB_PORT no están definidas");
 }
 
-const serverRepAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_REP}`;
-const archivoPosiciones = process.argv[5];
+const brokerRepAddress = `tcp://127.0.0.1:${process.env.BROKER_PORT}`; // Asumiendo broker en localhost
+const brokerPubAddress = `tcp://127.0.0.1:${process.env.BROKER_PUB_PORT}`;
+
+// Parámetros de entrada
+const [numUsuarios, n, m, archivoPosiciones] = process.argv.slice(2, 6);
+
 const rutaArchivoPosiciones = path.resolve(archivoPosiciones);
 
 if (!fs.existsSync(rutaArchivoPosiciones)) {
@@ -25,13 +30,24 @@ try {
     process.exit(1);
 }
 
+// Función para crear un usuario
 async function crearUsuario(id, x, y) {
     const socketReq = new zmq.Request();
-    console.log(`Usuario ${id}: Conectando a ${serverRepAddress}`);
-    await socketReq.connect(serverRepAddress);
+    const socketSub = new zmq.Subscriber();
 
-    async function solicitarTaxi(tiempoEsperaInicial) {
-        console.log(`Usuario ${id}: Solicitando un taxi desde (${x}, ${y}) en t=${tiempoEsperaInicial} segundos.`);
+    // Conectar al broker para solicitudes y actualizaciones
+    await socketReq.connect(brokerRepAddress); // REQ-REP hacia broker
+    console.log(`Usuario ${id}: Conectado al broker en ${brokerRepAddress}`);
+
+    // Conectar al broker para recibir notificaciones de estado
+    await socketSub.connect(brokerPubAddress); // PUB-SUB desde broker
+    const estadoTopic = 'estado';
+    socketSub.subscribe(estadoTopic);
+    console.log(`Usuario ${id} suscrito a '${estadoTopic}' para recibir notificaciones.`);
+
+    // Función para solicitar un taxi
+    async function solicitarTaxi(intentos = 1) {
+        console.log(`Usuario ${id}: Solicitando un taxi en intento ${intentos}.`);
         const solicitud = { type: 'request_assignment', idUsuario: id, xUsuario: x, yUsuario: y };
         const tiempoInicio = Date.now();
 
@@ -47,10 +63,8 @@ async function crearUsuario(id, x, y) {
 
             if (respuesta.exito) {
                 console.log(`Usuario ${id}: Taxi asignado (ID: ${respuesta.idTaxi}) en ${tiempoRespuesta} segundos.`);
-                await socketReq.close();
             } else {
                 console.log(`Usuario ${id}: ${respuesta.mensaje}. Tiempo de respuesta: ${tiempoRespuesta} segundos.`);
-                await socketReq.close();
             }
         } catch (error) {
             if (error.message === 'timeout') {
@@ -58,15 +72,39 @@ async function crearUsuario(id, x, y) {
             } else {
                 console.log(`Usuario ${id}: Error en la solicitud: ${error.message}`);
             }
-            await socketReq.close();
+        }
+    }
+
+    // Función para manejar notificaciones de estado (activo/inactivo)
+    async function manejarEstado() {
+        for await (const [topic, msg] of socketSub) {
+            const topicStr = topic.toString();
+            const notificacion = JSON.parse(msg.toString());
+
+            if (topicStr === 'estado') {
+                if (notificacion.estado === 'inactivo') {
+                    console.log(`Usuario ${id}: Detectado fallo del servidor central. Reintentando la solicitud en el servidor réplica.`);
+                    // Reintentar la solicitud inmediatamente
+                    await solicitarTaxi(1);
+                } else if (notificacion.estado === 'activo') {
+                    console.log(`Usuario ${id}: El servidor central ha vuelto a estar activo.`);
+                    // Opcional: Podrías implementar lógica para manejar el cambio de vuelta al servidor central
+                }
+            }
         }
     }
 
     // Generar un tiempo de espera inicial aleatorio entre 1 y 10 segundos
     const tiempoEsperaInicial = Math.floor(Math.random() * 10) + 1;
-    setTimeout(() => solicitarTaxi(tiempoEsperaInicial), tiempoEsperaInicial * 1000);
+    setTimeout(() => solicitarTaxi(), tiempoEsperaInicial * 1000);
+
+    // Iniciar la función para manejar las notificaciones de estado
+    manejarEstado().catch(error => {
+        console.error(`Usuario ${id}: Error al manejar estado: ${error.message}`);
+    });
 }
 
+// Función para generar múltiples usuarios
 async function generarUsuarios(numUsuarios, n, m) {
     let usuarioId = 1;
     const processUniqueId = process.pid;
@@ -79,9 +117,7 @@ async function generarUsuarios(numUsuarios, n, m) {
     }
 }
 
-const [numUsuarios, n, m] = process.argv.slice(2, 5);
-
-if (!numUsuarios || !n || !m || !process.argv[5]) {
+if (!numUsuarios || !n || !m || !archivoPosiciones) {
     console.error("Uso: node generadorUsuarios.js <numUsuarios> <N> <M> <archivoPosiciones>");
     process.exit(1);
 }

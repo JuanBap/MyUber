@@ -6,6 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "server": "node server/servidorCentral.js",
+    "servidorReplica": "node server/servidorReplica.js",
+    "broker": "node server/broker.js",
     "taxi1": "node taxis/taxi.js 1 8 10 1 1 2 3",
     "taxi2": "node taxis/taxi.js 2 8 10 5 4 4 3",
     "taxi3": "node taxis/taxi.js 3 8 10 3 5 4 3",

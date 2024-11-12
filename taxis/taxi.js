@@ -1,6 +1,7 @@
 // taxis/taxi.js
 require("dotenv").config();
 const zmq = require("zeromq");
+const process = require('process');
 
 // Parámetros de entrada
 const id = parseInt(process.argv[2]);
@@ -12,13 +13,13 @@ const velocidad = parseInt(process.argv[7]);
 const maxServicios = parseInt(process.argv[8]); // Límite de servicios diarios
 
 // Verificación de variables de entorno
-if (!process.env.SERVER_IP || !process.env.SERVER_PORT_PUB || !process.env.SERVER_PORT_REP) {
-    throw new Error("Las variables de entorno SERVER_IP, SERVER_PORT_PUB o SERVER_PORT_REP no están definidas");
+if (!process.env.BROKER_PORT || !process.env.BROKER_PUB_PORT) {
+    throw new Error("Las variables de entorno BROKER_PORT o BROKER_PUB_PORT no están definidas");
 }
 
-// Configuración del servidor central desde .env
-const serverRepAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_REP}`;
-const serverPubAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_PUB}`;
+// Configuración del broker desde .env
+const brokerRepAddress = `tcp://127.0.0.1:${process.env.BROKER_PORT}`; // Asumiendo broker en localhost
+const brokerPubAddress = `tcp://127.0.0.1:${process.env.BROKER_PUB_PORT}`;
 
 // Validación de posición inicial
 if (xInicial < 0 || xInicial >= n || yInicial < 0 || yInicial >= m) {
@@ -34,31 +35,66 @@ let serviciosRealizados = 0; // Contador de servicios completados
 
 // Función principal
 (async () => {
-    const socketReq = new zmq.Request();
+    // Crear dos sockets Request
+    const socketReqControl = new zmq.Request();
+    const socketReqUpdate = new zmq.Request();
     const socketSub = new zmq.Subscriber();
 
-    // Conectar al servidor para solicitudes y actualizaciones
-    await socketReq.connect(serverRepAddress); // REQ-REP para registro y actualizaciones
+    // Conectar al broker para solicitudes de control (register, deregister)
+    await socketReqControl.connect(brokerRepAddress);
+    console.log(`Taxi ${id}: Conectado al broker en ${brokerRepAddress} para control.`);
 
-    // Conectar al servidor para recibir asignaciones
-    await socketSub.connect(serverPubAddress); // PUB-SUB para asignaciones
+    // Conectar al broker para solicitudes de actualización (update)
+    await socketReqUpdate.connect(brokerRepAddress);
+    console.log(`Taxi ${id}: Conectado al broker en ${brokerRepAddress} para actualizaciones.`);
+
+    // Conectar al broker para recibir notificaciones
+    await socketSub.connect(brokerPubAddress); // PUB-SUB desde broker
+    const estadoTopic = 'estado';
+    socketSub.subscribe(estadoTopic);
+    console.log(`Taxi ${id} suscrito a '${estadoTopic}' para recibir notificaciones.`);
+
+    // Conectar al broker para recibir asignaciones específicas
     const assignmentTopic = `assignment-${id}`;
     socketSub.subscribe(assignmentTopic);
     console.log(`Taxi ${id} suscrito a '${assignmentTopic}' para recibir asignaciones.`);
 
-    // Función para registrar el taxi en el servidor central
+    // Función para registrar el taxi en el servidor actual (central o réplica)
     async function registrarTaxi() {
         const mensajeRegistro = { type: 'register', id: id, x: x, y: y, ocupado: false };
-        await socketReq.send(JSON.stringify(mensajeRegistro));
-        const [msg] = await socketReq.receive();
-        const respuesta = JSON.parse(msg.toString());
+        try {
+            await socketReqControl.send(JSON.stringify(mensajeRegistro));
+            const [msg] = await socketReqControl.receive();
+            const respuesta = JSON.parse(msg.toString());
 
-        if (respuesta.exito) {
-            console.log(`Taxi ${id} registrado exitosamente en el servidor central.`);
-            console.log(`Posición inicial: (${xInicial}, ${yInicial})`);
-        } else {
-            console.error(`Error al registrar Taxi ${id} en el servidor central.`);
+            if (respuesta.exito) {
+                console.log(`Taxi ${id}: Registrado exitosamente en el servidor.`);
+                console.log(`Taxi ${id}: Posición inicial: (${xInicial}, ${yInicial})`);
+            } else {
+                console.error(`Taxi ${id}: Error al registrar en el servidor. Mensaje: ${respuesta.mensaje}`);
+                process.exit(1);
+            }
+        } catch (error) {
+            console.error(`Taxi ${id}: Error al registrar en el servidor: ${error.message}`);
             process.exit(1);
+        }
+    }
+
+    // Función para desregistrar el taxi del servidor actual (central o réplica)
+    async function desregistrarTaxi() {
+        const mensajeDesregistro = { type: 'deregister', id: id };
+        try {
+            await socketReqControl.send(JSON.stringify(mensajeDesregistro));
+            const [msgDesreg] = await socketReqControl.receive();
+            const respuestaDesreg = JSON.parse(msgDesreg.toString());
+
+            if (respuestaDesreg.exito) {
+                console.log(`Taxi ${id}: Desregistrado correctamente del servidor.`);
+            } else {
+                console.error(`Taxi ${id}: Error al desregistrar del servidor: ${respuestaDesreg.mensaje}`);
+            }
+        } catch (error) {
+            console.error(`Taxi ${id}: Error al desregistrar del servidor: ${error.message}`);
         }
     }
 
@@ -83,80 +119,96 @@ let serviciosRealizados = 0; // Contador de servicios completados
 
             const nuevaPosicion = { type: 'update', id: id, x: x, y: y, ocupado: ocupado };
             try {
-                await socketReq.send(JSON.stringify(nuevaPosicion)); // Enviar la nueva posición
-                const [msg] = await socketReq.receive();
+                await socketReqUpdate.send(JSON.stringify(nuevaPosicion)); // Enviar la nueva posición
+                const [msg] = await socketReqUpdate.receive();
                 const respuesta = JSON.parse(msg.toString());
                 if (!respuesta.exito) {
-                    console.error(`Error al actualizar posición del Taxi ${id}: ${respuesta.mensaje}`);
+                    console.error(`Taxi ${id}: Error al actualizar posición: ${respuesta.mensaje}`);
                 }
             } catch (error) {
-                console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
+                console.error(`Taxi ${id}: Error al enviar posición: ${error.message}`);
             }
 
-            console.log(`Taxi ${id} se movió a (${x}, ${y})`);
+            console.log(`Taxi ${id}: Se movió a (${x}, ${y})`);
         }, intervaloMovimiento);
     }
 
-    // Función para manejar asignaciones recibidas
-    async function manejarAsignacion() {
+    // Función para manejar notificaciones de estado (activo/inactivo)
+    async function manejarEstado() {
         for await (const [topic, msg] of socketSub) {
-            const asignacion = JSON.parse(msg.toString());
-            if (asignacion.type === 'assignment') {
-                console.log(`Taxi ${id} ocupado... entrando en timeout`);
+            const topicStr = topic.toString();
+            const notificacion = JSON.parse(msg.toString());
 
-                // Marcar como ocupado
-                ocupado = true;
-                serviciosRealizados += 1;
+            if (topicStr === 'estado') {
+                if (notificacion.estado === 'inactivo') {
+                    console.log(`Taxi ${id}: Detectado fallo del servidor central. Re-registrando en el servidor réplica.`);
+                    // Desregistrarse del servidor actual
+                    await desregistrarTaxi();
 
-                // Simular servicio de 30 segundos
-                setTimeout(async () => {
-                    // Finalizar servicio
-                    ocupado = false;
-                    console.log(`Taxi ${id} ha completado el servicio y está disponible.`);
-
-                    // Regresar a la posición inicial
+                    // Re-inicializar estado
                     x = xInicial;
                     y = yInicial;
-                    const mensajeFinalizacion = { type: 'update', id: id, x: x, y: y, ocupado: false };
-                    try {
-                        await socketReq.send(JSON.stringify(mensajeFinalizacion)); // Actualizar posición inicial
-                        const [msgPos] = await socketReq.receive();
-                        const respuestaPos = JSON.parse(msgPos.toString());
-                        if (!respuestaPos.exito) {
-                            console.error(`Error al actualizar posición del Taxi ${id}: ${respuestaPos.mensaje}`);
-                        }
-                    } catch (error) {
-                        console.error(`Error al enviar posición del Taxi ${id}: ${error.message}`);
-                    }
+                    ocupado = false;
+                    serviciosRealizados = 0;
 
-                    console.log(`Taxi ${id} volvió a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
-
-                    // Verificar si se alcanzó el límite de servicios
-                    if (serviciosRealizados >= maxServicios) {
-                        console.log(`Taxi ${id} ha completado el máximo de servicios diarios y finaliza su operación.`);
-
-                        // Enviar mensaje de desregistro antes de salir
-                        const mensajeDesregistro = { type: 'deregister', id: id };
-                        try {
-                            await socketReq.send(JSON.stringify(mensajeDesregistro));
-                            const [msgDesreg] = await socketReq.receive();
-                            const respuestaDesreg = JSON.parse(msgDesreg.toString());
-                            if (respuestaDesreg.exito) {
-                                console.log(`Taxi ${id} desregistrado correctamente del servidor central.`);
-                            } else {
-                                console.error(`Error al desregistrar Taxi ${id}: ${respuestaDesreg.mensaje}`);
-                            }
-                        } catch (error) {
-                            console.error(`Error al desregistrar Taxi ${id}: ${error.message}`);
-                        }
-
-                        process.exit(0);
-                    }
-                }, 30000); // 30 segundos para simular el servicio
+                    // Re-registrarse en el servidor réplica
+                    await registrarTaxi();
+                } else if (notificacion.estado === 'activo') {
+                    console.log(`Taxi ${id}: El servidor central ha vuelto a estar activo.`);
+                    // Opcional: Podrías implementar lógica para cambiar de nuevo al servidor central si lo deseas
+                }
+            } else if (topicStr === `assignment-${id}`) {
+                // Asignación específica
+                if (notificacion.type === 'assignment') {
+                    console.log(`Taxi ${id}: Asignado al Usuario ${notificacion.idUsuario} en posición (${notificacion.xUsuario}, ${notificacion.yUsuario}).`);
+                    serviciosRealizados += 1;
+                    await servicioOcupado();
+                }
             }
         }
     }
 
+    // Función para manejar el servicio ocupado
+    async function servicioOcupado(tiempoServicio = 30000) { // 30 segundos por defecto
+        ocupado = true;
+        console.log(`Taxi ${id}: Ocupado... entrando en timeout.`);
+
+        // Simular servicio
+        setTimeout(async () => {
+            // Finalizar servicio
+            ocupado = false;
+            console.log(`Taxi ${id}: Ha completado el servicio y está disponible.`);
+
+            // Regresar a la posición inicial
+            x = xInicial;
+            y = yInicial;
+            const mensajeFinalizacion = { type: 'update', id: id, x: x, y: y, ocupado: false };
+            try {
+                await socketReqUpdate.send(JSON.stringify(mensajeFinalizacion)); // Enviar la nueva posición
+                const [msgPos] = await socketReqUpdate.receive();
+                const respuestaPos = JSON.parse(msgPos.toString());
+                if (!respuestaPos.exito) {
+                    console.error(`Taxi ${id}: Error al actualizar posición inicial: ${respuestaPos.mensaje}`);
+                }
+            } catch (error) {
+                console.error(`Taxi ${id}: Error al enviar posición inicial: ${error.message}`);
+            }
+
+            console.log(`Taxi ${id}: Volvió a la posición inicial (${xInicial}, ${yInicial}) y está disponible nuevamente.`);
+
+            // Verificar si se alcanzó el límite de servicios
+            if (serviciosRealizados >= maxServicios) {
+                console.log(`Taxi ${id}: Ha completado el máximo de servicios diarios y finaliza su operación.`);
+
+                // Enviar mensaje de desregistro antes de salir
+                await desregistrarTaxi();
+
+                process.exit(0);
+            }
+        }, tiempoServicio);
+    }
+
+    // Iniciar las funciones
     enviarPosicion();
-    manejarAsignacion();
+    manejarEstado();
 })();

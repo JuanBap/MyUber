@@ -1,10 +1,11 @@
-// server/servidorCentral.js
+// server/servidorReplica.js
 require("dotenv").config();
 const zmq = require("zeromq");
 
-// Configuración del servidor central desde .env
-const centralRepAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_REP}`;
-const centralPubAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_PUB}`;
+// Configuración del servidor réplica desde .env
+const replicaRepAddress = `tcp://${process.env.REPLICA_SERVER_IP}:${process.env.REPLICA_SERVER_PORT_REP}`;
+const replicaPubAddress = `tcp://${process.env.REPLICA_SERVER_IP}:${process.env.REPLICA_SERVER_PORT_PUB}`;
+const brokerToReplicaSubAddress = `tcp://127.0.0.1:${process.env.BROKER_TO_REPLICA_PORT}`; // Asumiendo broker en localhost
 
 // Estado de los taxis
 const taxis = {};
@@ -12,6 +13,9 @@ const taxis = {};
 // Crear sockets
 const repSocket = new zmq.Reply();
 const pubSocket = new zmq.Publisher();
+
+// Crear socket para recibir notificaciones del broker
+const brokerToReplicaSub = new zmq.Subscriber();
 
 // Flag para imprimir el mensaje una vez
 let healthcheckPrinted = false;
@@ -25,14 +29,14 @@ function encontrarTaxisDisponibles() {
 async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
     const disponibles = encontrarTaxisDisponibles();
     if (disponibles.length === 0) {
-        console.log(`Central: No hay taxis disponibles para el Usuario ${idUsuario}.`);
+        console.log(`Replica: No hay taxis disponibles para el Usuario ${idUsuario}.`);
         return null;
     }
 
     // Seleccionar el taxi más cercano (simplemente el primero disponible)
     const taxiAsignado = disponibles[0];
     taxiAsignado.ocupado = true;
-    console.log(`Central: Asignando Taxi ${taxiAsignado.id} al Usuario ${idUsuario} en posición (${xUsuario}, ${yUsuario})`);
+    console.log(`Replica: Asignando Taxi ${taxiAsignado.id} al Usuario ${idUsuario} en posición (${xUsuario}, ${yUsuario})`);
 
     // Publicar la asignación al taxi específico
     const asignacion = {
@@ -46,10 +50,31 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
 }
 
 (async () => {
-    await repSocket.bind(centralRepAddress);
-    await pubSocket.bind(centralPubAddress);
-    console.log(`Servidor Central iniciado en ${centralPubAddress} (asignaciones) y ${centralRepAddress} (registros y solicitudes)`);
+    // Bind de los sockets de réplica
+    await repSocket.bind(replicaRepAddress);
+    await pubSocket.bind(replicaPubAddress);
+    console.log(`Servidor Réplica iniciado en ${replicaPubAddress} (asignaciones) y ${replicaRepAddress} (registros y solicitudes)`);
 
+    // Conectar al broker para recibir notificaciones
+    await brokerToReplicaSub.connect(brokerToReplicaSubAddress);
+    brokerToReplicaSub.subscribe('role');
+    console.log(`Servidor Réplica: Suscrito a 'role' en ${brokerToReplicaSubAddress} para recibir notificaciones.`);
+
+    // Manejar notificaciones del broker
+    (async () => {
+        for await (const [topic, msg] of brokerToReplicaSub) {
+            if (topic.toString() === 'role') {
+                const notificacion = JSON.parse(msg.toString());
+                if (notificacion.accion === 'asumir_principal') {
+                    console.log("Servidor réplica asumiendo rol de principal.");
+                    // Aquí podrías implementar lógica adicional si es necesario
+                    // Por ejemplo, cambiar configuraciones internas o activar procesos específicos
+                }
+            }
+        }
+    })();
+
+    // Manejar solicitudes de clientes (taxis y usuarios)
     for await (const [msg] of repSocket) {
         const mensaje = JSON.parse(msg.toString());
 
@@ -59,14 +84,14 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
                 // Taxi ya registrado
                 await repSocket.send(JSON.stringify({ exito: true }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Taxi ${id} ya registrado.`);
+                    console.log(`Replica: Taxi ${id} ya registrado.`);
                 }
             } else {
                 // Nuevo registro
                 taxis[id] = { id, x, y, ocupado, serviciosRealizados: 0 };
                 await repSocket.send(JSON.stringify({ exito: true }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Taxi ${id} registrado en posición (${x}, ${y}), disponible.`);
+                    console.log(`Replica: Taxi ${id} registrado en posición (${x}, ${y}), disponible.`);
                 }
             }
         } else if (mensaje.type === 'update') {
@@ -77,18 +102,18 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
                 taxis[id].ocupado = ocupado;
                 await repSocket.send(JSON.stringify({ exito: true }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Actualización de Taxi ${id}: posición (${x}, ${y}), ocupado: ${ocupado}`);
+                    console.log(`Replica: Actualización de Taxi ${id}: posición (${x}, ${y}), ocupado: ${ocupado}`);
                 }
 
                 // Si el taxi no está ocupado, puede recibir nuevas asignaciones
                 if (!ocupado && !healthcheckPrinted) {
-                    console.log(`Central: Taxi ${id} está disponible para nuevas asignaciones.`);
+                    console.log(`Replica: Taxi ${id} está disponible para nuevas asignaciones.`);
                 }
             } else {
                 // Taxi no registrado
                 await repSocket.send(JSON.stringify({ exito: false, mensaje: "Taxi no registrado." }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Actualización fallida: Taxi ${id} no está registrado.`);
+                    console.log(`Replica: Actualización fallida: Taxi ${id} no está registrado.`);
                 }
             }
         } else if (mensaje.type === 'deregister') {
@@ -97,13 +122,13 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
                 delete taxis[id];
                 await repSocket.send(JSON.stringify({ exito: true }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Taxi ${id} desregistrado y eliminado de la lista de disponibles.`);
+                    console.log(`Replica: Taxi ${id} desregistrado y eliminado de la lista de disponibles.`);
                 }
             } else {
                 // Taxi no registrado
                 await repSocket.send(JSON.stringify({ exito: false, mensaje: "Taxi no registrado." }));
                 if (!healthcheckPrinted) {
-                    console.log(`Central: Desregistro fallido: Taxi ${id} no está registrado.`);
+                    console.log(`Replica: Desregistro fallido: Taxi ${id} no está registrado.`);
                 }
             }
         } else if (mensaje.type === 'request_assignment') {
@@ -117,7 +142,7 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
         } else if (mensaje.type === 'healthcheck') {
             // Manejo de solicitudes de healthcheck
             if (!healthcheckPrinted) {
-                console.log(`Central: Healthcheck recibido. Estado: Activo.`);
+                console.log(`Replica: Healthcheck recibido. Estado: Activo.`);
                 healthcheckPrinted = true;
             }
             await repSocket.send(JSON.stringify({ estado: "Activo" }));
@@ -125,7 +150,7 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
             // Tipo de mensaje desconocido
             await repSocket.send(JSON.stringify({ exito: false, mensaje: "Tipo de mensaje desconocido." }));
             if (!healthcheckPrinted) {
-                console.log(`Central: Mensaje desconocido recibido: ${JSON.stringify(mensaje)}`);
+                console.log(`Replica: Mensaje desconocido recibido: ${JSON.stringify(mensaje)}`);
             }
         }
     }
