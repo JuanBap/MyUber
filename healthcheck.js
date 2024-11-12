@@ -3,8 +3,8 @@ require('dotenv').config();
 const zmq = require('zeromq');
 
 const serverRepAddress = `tcp://${process.env.SERVER_IP}:${process.env.SERVER_PORT_REP}`;
-const CHECK_INTERVAL = 60000; // Intervalo de 1 minuto (en milisegundos)
-const TIMEOUT = 5000; // Timeout de 5 segundos (en milisegundos)
+const CHECK_INTERVAL = 1000; // Intervalo de 1 segundo 
+const TIMEOUT = 500; // Timeout de 0.5 segundos 
 
 async function realizarHealthcheck() {
     const socket = new zmq.Request();
