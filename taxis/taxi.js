@@ -18,8 +18,8 @@ if (!process.env.BROKER_PORT || !process.env.BROKER_PUB_PORT) {
 }
 
 // Configuración del broker desde .env
-const brokerRepAddress = `tcp://127.0.0.1:${process.env.BROKER_PORT}`; // Asumiendo broker en localhost
-const brokerPubAddress = `tcp://127.0.0.1:${process.env.BROKER_PUB_PORT}`;
+const brokerRepAddress = `tcp://${process.env.BROKER_IP}:${process.env.BROKER_PORT}`;
+const brokerPubAddress = `tcp://${process.env.BROKER_IP}:${process.env.BROKER_PUB_PORT}`;
 
 // Validación de posición inicial
 if (xInicial < 0 || xInicial >= n || yInicial < 0 || yInicial >= m) {

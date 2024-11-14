@@ -9,8 +9,9 @@ if (!process.env.BROKER_PORT || !process.env.BROKER_PUB_PORT) {
     throw new Error("Las variables de entorno BROKER_PORT o BROKER_PUB_PORT no están definidas");
 }
 
-const brokerRepAddress = `tcp://127.0.0.1:${process.env.BROKER_PORT}`; // Asumiendo broker en localhost
-const brokerPubAddress = `tcp://127.0.0.1:${process.env.BROKER_PUB_PORT}`;
+// Modificar las direcciones del broker para usar la IP de la red
+const brokerRepAddress = `tcp://${process.env.BROKER_IP}:${process.env.BROKER_PORT}`;
+const brokerPubAddress = `tcp://${process.env.BROKER_IP}:${process.env.BROKER_PUB_PORT}`;
 
 // Parámetros de entrada
 const [numUsuarios, n, m, archivoPosiciones] = process.argv.slice(2, 6);
