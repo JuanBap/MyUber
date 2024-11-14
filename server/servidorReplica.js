@@ -1,6 +1,8 @@
 // server/servidorReplica.js
 require("dotenv").config();
 const zmq = require("zeromq");
+const fs = require('fs');
+const path = require('path');
 
 // Configuración del servidor réplica desde .env
 const replicaRepAddress = `tcp://${process.env.REPLICA_SERVER_IP}:${process.env.REPLICA_SERVER_PORT_REP}`;
@@ -25,18 +27,73 @@ function encontrarTaxisDisponibles() {
     return Object.values(taxis).filter(taxi => !taxi.ocupado);
 }
 
+// Función para calcular la distancia Manhattan entre dos puntos
+function calcularDistancia(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+}
+
+// Función para cargar o inicializar el archivo de logs
+function cargarLogs() {
+    const logPath = path.join(__dirname, '..', 'taxilog.json');
+    if (!fs.existsSync(logPath)) {
+        const initialLog = {
+            taxis: {},
+            servicios: {
+                exitosos: 0,
+                negados: 0
+            }
+        };
+        fs.writeFileSync(logPath, JSON.stringify(initialLog, null, 2));
+        return initialLog;
+    }
+    return JSON.parse(fs.readFileSync(logPath, 'utf8'));
+}
+
+// Función para guardar los logs
+function guardarLogs(logs) {
+    const logPath = path.join(__dirname, '..', 'taxilog.json');
+    fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
+}
+
 // Función para asignar un taxi al usuario
 async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
     const disponibles = encontrarTaxisDisponibles();
+    const logs = cargarLogs();
+
     if (disponibles.length === 0) {
         console.log(`Replica: No hay taxis disponibles para el Usuario ${idUsuario}.`);
+        logs.servicios.negados++;
+        guardarLogs(logs);
         return null;
     }
 
-    // Seleccionar el taxi más cercano (simplemente el primero disponible)
-    const taxiAsignado = disponibles[0];
+    // Encontrar el taxi más cercano calculando la distancia Manhattan
+    const taxiAsignado = disponibles.reduce((nearest, current) => {
+        const distanciaCurrent = calcularDistancia(current.x, current.y, xUsuario, yUsuario);
+        const distanciaNearest = calcularDistancia(nearest.x, nearest.y, xUsuario, yUsuario);
+        return distanciaCurrent < distanciaNearest ? current : nearest;
+    });
+
     taxiAsignado.ocupado = true;
     console.log(`Replica: Asignando Taxi ${taxiAsignado.id} al Usuario ${idUsuario} en posición (${xUsuario}, ${yUsuario})`);
+    console.log(`Replica: Distancia al usuario: ${calcularDistancia(taxiAsignado.x, taxiAsignado.y, xUsuario, yUsuario)} unidades`);
+
+    // Registrar el servicio en los logs
+    if (!logs.taxis[taxiAsignado.id]) {
+        logs.taxis[taxiAsignado.id] = {
+            posiciones: [],
+            serviciosRealizados: 0,
+            asignaciones: []
+        };
+    }
+    logs.taxis[taxiAsignado.id].serviciosRealizados++;
+    logs.servicios.exitosos++;
+    logs.taxis[taxiAsignado.id].asignaciones.push({
+        taxiPos: { x: taxiAsignado.x, y: taxiAsignado.y },
+        userPos: { x: xUsuario, y: yUsuario },
+        timestamp: new Date().toISOString()
+    });
+    guardarLogs(logs);
 
     // Publicar la asignación al taxi específico
     const asignacion = {
@@ -100,6 +157,22 @@ async function asignarTaxi(idUsuario, xUsuario, yUsuario) {
                 taxis[id].x = x;
                 taxis[id].y = y;
                 taxis[id].ocupado = ocupado;
+
+                // Registrar movimiento en tiempo real
+                const logPath = path.join(__dirname, '..', 'taxilog.json');
+                let logs = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+                
+                // Agregar el movimiento al registro
+                logs.movimientos.push({
+                    taxiId: id,
+                    posicion: { x, y },
+                    timestamp: new Date().toISOString(),
+                    ocupado
+                });
+
+                // Guardar inmediatamente
+                fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
+
                 await repSocket.send(JSON.stringify({ exito: true }));
                 if (!healthcheckPrinted) {
                     console.log(`Replica: Actualización de Taxi ${id}: posición (${x}, ${y}), ocupado: ${ocupado}`);

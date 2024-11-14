@@ -1,0 +1,110 @@
+{
+  "taxis": {
+    "2": {
+      "posiciones": [],
+      "serviciosRealizados": 2,
+      "asignaciones": [
+        {
+          "taxiPos": {
+            "x": 6,
+            "y": 6
+          },
+          "userPos": {
+            "x": 3,
+            "y": 5
+          },
+          "timestamp": "2024-11-14T18:43:41.179Z"
+        },
+        {
+          "taxiPos": {
+            "x": 6,
+            "y": 8
+          },
+          "userPos": {
+            "x": 3,
+            "y": 5
+          },
+          "timestamp": "2024-11-14T18:44:25.488Z"
+        }
+      ]
+    }
+  },
+  "servicios": {
+    "exitosos": 2,
+    "negados": 1
+  },
+  "movimientos": [
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 5,
+        "y": 6
+      },
+      "timestamp": "2024-11-14T18:43:21.554Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 5
+      },
+      "timestamp": "2024-11-14T18:43:26.880Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 6
+      },
+      "timestamp": "2024-11-14T18:43:36.553Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 6
+      },
+      "timestamp": "2024-11-14T18:43:41.881Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 7,
+        "y": 6
+      },
+      "timestamp": "2024-11-14T18:43:51.555Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 7
+      },
+      "timestamp": "2024-11-14T18:43:56.881Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 6
+      },
+      "timestamp": "2024-11-14T18:44:06.556Z",
+      "ocupado": false
+    },
+    {
+      "taxiId": 2,
+      "posicion": {
+        "x": 6,
+        "y": 8
+      },
+      "timestamp": "2024-11-14T18:44:11.882Z",
+      "ocupado": false
+    }
+  ]
+}

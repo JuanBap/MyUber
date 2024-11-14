@@ -46,32 +46,36 @@ async function crearUsuario(id, x, y) {
     console.log(`Usuario ${id} suscrito a '${estadoTopic}' para recibir notificaciones.`);
 
     // Función para solicitar un taxi
-    async function solicitarTaxi(intentos = 1) {
-        console.log(`Usuario ${id}: Solicitando un taxi en intento ${intentos}.`);
+    async function solicitarTaxi() {
+        console.log(`Usuario ${id}: Solicitando un taxi.`);
         const solicitud = { type: 'request_assignment', idUsuario: id, xUsuario: x, yUsuario: y };
         const tiempoInicio = Date.now();
-
+        
         try {
             await socketReq.send(JSON.stringify(solicitud));
             const [msg] = await Promise.race([
                 socketReq.receive(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)) // Timeout de 5 segundos
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
             ]);
-
+            
             const respuesta = JSON.parse(msg.toString());
             const tiempoRespuesta = ((Date.now() - tiempoInicio) / 1000).toFixed(3);
-
+            
             if (respuesta.exito) {
                 console.log(`Usuario ${id}: Taxi asignado (ID: ${respuesta.idTaxi}) en ${tiempoRespuesta} segundos.`);
             } else {
                 console.log(`Usuario ${id}: ${respuesta.mensaje}. Tiempo de respuesta: ${tiempoRespuesta} segundos.`);
+                // Cerrar conexiones cuando no hay taxis disponibles
+                await socketReq.close();
+                await socketSub.close();
+                process.exit(0);
             }
         } catch (error) {
-            if (error.message === 'timeout') {
-                console.log(`Usuario ${id}: Tiempo de espera agotado, tiempo de respuesta: 5.000 segundos.`);
-            } else {
-                console.log(`Usuario ${id}: Error en la solicitud: ${error.message}`);
-            }
+            console.log(`Usuario ${id}: Error en la solicitud: ${error.message}`);
+            // Cerrar conexiones en caso de error
+            await socketReq.close();
+            await socketSub.close();
+            process.exit(1);
         }
     }
 
