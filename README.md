@@ -1,5 +1,8 @@
 # Proyecto MyUber - Introducción a Sistemas Distribuidos
 
+Este proyecto busca modelar un servicio distribuido para evaluar tolerancia a fallas (TEOREMA CAP)
+
+
 ## Preparar el entorno para la ejecución
 
 - npm install dotenv mongoose zeromq
